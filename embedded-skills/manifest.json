@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "source": "installed original Skill package snapshot, SHA-256 verified against current source",
+  "skills": [
+    "semantic-refactor-forge",
+    "forensic-prune"
+  ],
+  "files": [
+    {
+      "path": "forensic-prune/agents/openai.yaml",
+      "size": 514,
+      "sha256": "5ece07b1cab01a169ea725297843924ac3ebb19bc58fb47b8de4b6174bb16562"
+    },
+    {
+      "path": "forensic-prune/references/decision-spec.md",
+      "size": 21815,
+      "sha256": "ae91bc25ca86cf3f114ef03642133cd2160dd4141bc90d8d5137e4e4a2c5062a"
+    },
+    {
+      "path": "forensic-prune/references/ecosystems.md",
+      "size": 14161,
+      "sha256": "9ca16bb7975a408bce591f9da2047021348bce47c7976af534e3685b3b05cda4"
+    },
+    {
+      "path": "forensic-prune/references/governance-map.md",
+      "size": 13957,
+      "sha256": "22a04c7c2364a9823e62182f8120bae7eea8b8f55f3c17d2b64d017f670277dd"
+    },
+    {
+      "path": "forensic-prune/scripts/inventory.mjs",
+      "size": 10704,
+      "sha256": "823d8df98cb36ac549ff1e2bb304fab110b620a64ae7096dc191166f72933a94"
+    },
+    {
+      "path": "forensic-prune/SKILL.md",
+      "size": 20620,
+      "sha256": "cf90348ee03ec8932ffb2b883ac0a52cf2330433a8e5c09b9c6c23dd935b98a3"
+    },
+    {
+      "path": "forensic-prune/tests/governance.test.mjs",
+      "size": 8711,
+      "sha256": "18cc39948cce4367c5f52f5cf35ad6423ea0a09ea96a04ba5f3cefef1c080ecf"
+    },
+    {
+      "path": "forensic-prune/tests/inventory.test.mjs",
+      "size": 13290,
+      "sha256": "cb2668e30e55983c2b2edfa8c9ca798e2c61778e4784c1a4438ec2e9ccd8dd86"
+    },
+    {
+      "path": "semantic-refactor-forge/assets/audit.schema.json",
+      "size": 2735,
+      "sha256": "0f2372e9e0b5f42647ec8734f8a21b3453c334409640bcb9adfd775a5a4d8c52"
+    },
+    {
+      "path": "semantic-refactor-forge/references/atomization.md",
+      "size": 7255,
+      "sha256": "ba54d124ff37c514408c6171f748586dc167a2fe618f31f96736be4af6de6d4d"
+    },
+    {
+      "path": "semantic-refactor-forge/references/density.md",
+      "size": 6884,
+      "sha256": "e6b2c9b3097af5b44610b030fd96d84943c5db9a884df9939cfa792f098b9695"
+    },
+    {
+      "path": "semantic-refactor-forge/references/edge-matrix.md",
+      "size": 5948,
+      "sha256": "eac958ae9fa376bc592778c0f619aa4d390c6a5912c39320a89299ba9d55ce73"
+    },
+    {
+      "path": "semantic-refactor-forge/references/expert-review.md",
+      "size": 4809,
+      "sha256": "57c881c34cbec735fe3fe5a6827c01925a18689d17fca2023cc34e956896b4ee"
+    },
+    {
+      "path": "semantic-refactor-forge/references/markdown.md",
+      "size": 6060,
+      "sha256": "d1c09784d42e3364e03f127eceb812e3080687c1e319d359d30d906d487c8a8b"
+    },
+    {
+      "path": "semantic-refactor-forge/references/output-contract.md",
+      "size": 4180,
+      "sha256": "d92bd2e8fc0613c090e37a612dea14139930aafeb9f1ddecebbf6c62ad3af5f1"
+    },
+    {
+      "path": "semantic-refactor-forge/references/terminology.md",
+      "size": 6098,
+      "sha256": "601a2cdc15e4d34b7929dec069e185f1b24027031972b7202d83438d4455fdcb"
+    },
+    {
+      "path": "semantic-refactor-forge/references/verification.md",
+      "size": 5806,
+      "sha256": "88b3e9ff48f3b7d54cfbc828d7206fb1510d360eda340bd78a0ecfdd24e2fcb6"
+    },
+    {
+      "path": "semantic-refactor-forge/scripts/refactor_gate.py",
+      "size": 18672,
+      "sha256": "2f000c939b1f49d062e675e7daefada8189cd650ec83bc5433d212f4d6932857"
+    },
+    {
+      "path": "semantic-refactor-forge/scripts/verify_package.py",
+      "size": 12017,
+      "sha256": "f3a0c3c8eb4d1d75a9d27727ab1e943e053843572f3e8bcbe4b7827301415fe9"
+    },
+    {
+      "path": "semantic-refactor-forge/SHA256SUMS",
+      "size": 1361,
+      "sha256": "3c0337d5163c21d1e7d171709c81c4852c5ee72a212a34e55da607d6e184da5b"
+    },
+    {
+      "path": "semantic-refactor-forge/SKILL.md",
+      "size": 10795,
+      "sha256": "d9f7ef85735f2745e2f82b93580a5f75ae02548b7a3e9b2a4a0632160ac0b42c"
+    },
+    {
+      "path": "semantic-refactor-forge/tests/fixtures/source.md",
+      "size": 73,
+      "sha256": "fd826aaaa50b9f31b34fcb309c4f6e1bc5ba5211f2f435b2981e54878aa5eee5"
+    },
+    {
+      "path": "semantic-refactor-forge/tests/fixtures/target.md",
+      "size": 103,
+      "sha256": "7c490d646d5e6febfaf24f11155e58b36877545a4b143fdedf14d077768744ed"
+    },
+    {
+      "path": "semantic-refactor-forge/tests/test_refactor_gate.py",
+      "size": 16753,
+      "sha256": "2499f270ed60315dae17aeeefa0f0d7f70a1f58bc22367fb02d873dd2f6aa173"
+    }
+  ]
+}

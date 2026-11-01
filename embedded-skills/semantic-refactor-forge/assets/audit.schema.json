@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Semantic Refactor Forge Audit Contract",
+  "description": "Structure contract; gate script validates a documented subset using only Python stdlib. Semantic equivalence is a separate human review.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source_id", "target_id", "scope", "source_sha256", "target_sha256", "units", "unmapped_source", "unauthorized_additions", "open_issues", "review"],
+  "properties": {
+    "source_id": {"type": "string", "minLength": 1},
+    "target_id": {"type": "string", "minLength": 1},
+    "scope": {"enum": ["FULL", "SELECTION", "HEADING_RANGE", "MULTI_FILE"]},
+    "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "target_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "units": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "kind", "source_lines", "source_quote", "target_quote", "decision", "rationale"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^A[0-9]{3,}$"},
+          "kind": {"enum": ["MUST", "MUST_NOT", "MAY", "RECOMMEND", "DEFINE", "CONDITION", "THRESHOLD", "EXCEPTION", "EVIDENCE", "ANCHOR", "REDUNDANCY", "OBSOLETE"]},
+          "source_lines": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 1}},
+          "source_quote": {"type": "string", "minLength": 1},
+          "target_quote": {"type": "string"},
+          "decision": {"enum": ["PRESERVED", "REFORMULATED", "JUSTIFIED_REMOVAL", "UNRESOLVED"]},
+          "rationale": {"type": "string", "minLength": 1},
+          "removal_evidence": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "unmapped_source": {"type": "array", "items": {"type": "string"}},
+    "unauthorized_additions": {"type": "array", "items": {"type": "string"}},
+    "open_issues": {"type": "array", "items": {"type": "string"}},
+    "review": {
+      "type": "object", "additionalProperties": false,
+      "required": ["semantic_equivalence", "structural_integrity", "authority_consistency", "reviewer", "reviewed_at_utc", "evidence_refs"],
+      "properties": {
+        "semantic_equivalence": {"enum": ["PASS", "FAIL", "PENDING"]},
+        "structural_integrity": {"enum": ["PASS", "FAIL", "PENDING"]},
+        "authority_consistency": {"enum": ["PASS", "FAIL", "PENDING"]},
+        "reviewer": {"type": "string", "minLength": 1},
+        "reviewed_at_utc": {"type": "string", "format": "date-time"},
+        "evidence_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}

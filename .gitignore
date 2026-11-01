@@ -1,0 +1,45 @@
+# Local runtime and generated artifacts
+.dsh/
+state/
+node_modules/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+coverage/
+.nyc_output/
+dist/
+build/
+.cache/
+.tmp/
+tmp/
+*.tmp
+*.log
+*.bak
+*.backup
+*.snapshot
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.zip
+*.tgz
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+id_rsa*
+id_ed25519*
+credentials.*
+secrets.*
+.npmrc
+
+# Editors / operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

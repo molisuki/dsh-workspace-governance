@@ -1,0 +1,42 @@
+{
+  "name": "dsh-workspace-governance",
+  "version": "0.16.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "Local multi-workspace Markdown capacity monitoring and Agent Skill governance for DSH Desktop",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=4 test/*.test.mjs"
+  },
+  "files": [
+    "lib/",
+    "bin/",
+    "embedded-skills/",
+    "README.md",
+    "SECURITY.md"
+  ],
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./core": "./lib/core.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-workspace-governance": "./bin/cli.js"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-workspace-controller",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  }
+}
