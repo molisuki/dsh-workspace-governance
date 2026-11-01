@@ -1,0 +1,33 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Run tests
+        run: npm test
+      - name: Verify bundled Node Skill tests
+        run: node --test embedded-skills/forensic-prune/tests/*.test.mjs
+      - name: Verify Python Skill tests without bytecode artifacts
+        run: python -B -m unittest discover -s embedded-skills/semantic-refactor-forge/tests -p 'test_*.py'
+      - name: Verify bundled Python package integrity
+        run: python -B embedded-skills/semantic-refactor-forge/scripts/verify_package.py
+      - name: Verify package file selection
+        run: npm pack --dry-run --json
