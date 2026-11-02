@@ -66,7 +66,8 @@ test('capacity panel removes redundant statistics and conditionally renders cont
  assert.ok(card.includes('displayLimit===null?null'));
  assert.ok(card.includes('usageRate===null?null'));
  assert.ok(card.includes("'wg-progress-fill '+capacity.kind"));
- assert.ok(card.includes("canReviewDuplicates?"));
+ assert.ok(!card.includes('canReviewDuplicates'));
+ assert.ok(!source.includes('压缩差异审查'));
  assert.ok(!card.includes('wg-capacity-grid'));
  assert.ok(!card.includes("'/ 未设置'"));
  assert.ok(source.includes("tab==='logs'?logPanel"));

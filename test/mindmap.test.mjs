@@ -26,6 +26,7 @@ async function client(options={}){
   useRef:value=>({current:value}),
   useMemo:fn=>fn(),
   useEffect:fn=>{effects.push(fn);},
+  useLayoutEffect:fn=>{effects.push(fn);},
   useCallback:fn=>fn
  };
  vm.runInNewContext(code,{window:{__ModuleLoader__:{load(m){module=m;}},devicePixelRatio:options.devicePixelRatio},console,document,
@@ -76,6 +77,124 @@ test('topology uses real parent-child paths, stable geometry and collapsed branc
  const filtered=plugin.mindMapTopology(root,{...choices,tab:'warning',expanded:{'':false,docs:false}});
  assert.equal(filtered.nodes[0].open,true);
  assert.equal(filtered.nodes.some(n=>n.path==='docs/guide.md'),false,'explicit folder collapse prevails over filter auto-expansion');
+});
+
+async function interactiveMap(tree,options){
+ const code=await fs.readFile(new URL('../lib/client.js',import.meta.url),'utf8');
+ let module,slot=0,changed=false,layoutEffects=[];
+ const hooks=[];
+ const React={
+  createElement:(type,props,...children)=>({type,props:props??{},children}),
+  useState:initial=>{
+   const at=slot++;
+   if(!hooks[at])hooks[at]={value:typeof initial==='function'?initial():initial};
+   return [hooks[at].value,next=>{
+    const value=typeof next==='function'?next(hooks[at].value):next;
+    if(value!==hooks[at].value){hooks[at].value=value;changed=true;}
+   }];
+  },
+  useRef:initial=>{const at=slot++;return hooks[at]??(hooks[at]={current:initial});},
+  useLayoutEffect:fn=>{slot++;layoutEffects.push(fn);},
+  useEffect:()=>{slot++;},
+  useMemo:fn=>{slot++;return fn();},
+  useCallback:fn=>{slot++;return fn;}
+ };
+ vm.runInNewContext(code,{window:{devicePixelRatio:1,__ModuleLoader__:{load(value){module=value;}}},console});
+ const plugin=module.factory(()=>React);
+ let expanded={'':true},selected='',rendered,layout;
+ const render=()=>{
+  layout=plugin.mindMapTopology(tree,{...options,expanded});
+  for(let attempt=0;attempt<5;attempt++){
+   slot=0;changed=false;layoutEffects=[];
+   rendered=plugin.MindMap({layout,selected,
+    onSelect:path=>{selected=path;},
+    onToggle:(path,open)=>{expanded={...expanded,[path]:!open};},
+    onExpandAll:()=>{expanded=plugin.directoryExpansionMap(tree,true);},
+    onCollapseAll:()=>{expanded=plugin.directoryExpansionMap(tree,false);}
+   });
+   for(const effect of layoutEffects)effect();
+   if(!changed)break;
+   assert.ok(attempt<4,'anchor must settle without repeated state updates');
+  }
+  return rendered;
+ };
+ const view=()=>hooks.find(h=>h?.value&&typeof h.value==='object'&&'scale'in h.value)?.value;
+ const at=path=>{
+  const node=layout.nodes.find(n=>n.path===path);
+  assert.ok(node,'expected layout node '+path);
+  const v=view();
+  return {x:(node.x+node.width/2)*v.scale+v.x,y:(node.y+node.height/2)*v.scale+v.y};
+ };
+ const click=path=>{
+  const node=visit(rendered,n=>n.type==='button'&&n.props?.title===path&&
+   String(n.props.className).includes('wg-map-node'));
+  assert.ok(node,'expected clickable node '+path);
+  node.props.onClick();
+  return render();
+ };
+ render();
+ return {plugin,render,click,at,view,layout:()=>layout,hooks,tree,expanded:()=>expanded};
+}
+
+test('directory anchors retain exact screen coordinates across repeated folds in every mind-map view',async()=>{
+ const nested=item('','folder',1000,null,'unlimited',[
+  item('docs','folder',750,null,'unlimited',[
+   item('docs/chapters','folder',500,null,'unlimited',[
+    item('docs/chapters/first.md','file',125,150,'warning'),
+    item('docs/chapters/second.md','file',250,100,'overflow'),
+    item('docs/chapters/third.md','file',125,100,'overflow')
+   ]),
+   item('docs/third.md','file',250,150,'warning')
+  ]),
+  item('other.md','file',250,100,'overflow')
+ ]);
+ const policy={directories:{docs:{fileLimit:110}},files:{
+   'docs/chapters/first.md':{fileLimit:100},
+   'docs/chapters/second.md':{fileLimit:100},
+   'docs/third.md':{fileLimit:150}}};
+ for(const tab of ['tree','warning','overflow','overrides']){
+  const map=await interactiveMap(nested,{...choices,tab,policy});
+  const baseView=map.view();
+  const before=map.at('docs');
+  map.click('docs');
+  const expanded=map.at('docs');
+  assert.ok(Math.abs(expanded.x-before.x)<1e-8&&Math.abs(expanded.y-before.y)<1e-8,
+   tab+' folder must stay fixed when expanded');
+  assert.equal(map.view().scale,baseView.scale);
+  const chapterBefore=map.at('docs/chapters');
+  map.click('docs/chapters');
+  const chapterAfter=map.at('docs/chapters');
+  assert.ok(Math.abs(chapterAfter.x-chapterBefore.x)<1e-8&&Math.abs(chapterAfter.y-chapterBefore.y)<1e-8,
+   tab+' nested folder must stay fixed');
+  const beforeClose=map.at('docs/chapters');
+  map.click('docs/chapters');
+  assert.ok(Math.abs(map.at('docs/chapters').y-beforeClose.y)<1e-8,
+   tab+' nested collapse must preserve anchor');
+  const beforeDocsClose=map.at('docs');
+  map.click('docs');
+  assert.ok(Math.abs(map.at('docs').y-beforeDocsClose.y)<1e-8,
+   tab+' parent collapse must preserve anchor');
+ }
+});
+
+test('folder expansion preserves existing zoom and pan without recentering while protecting controls',async()=>{
+ const map=await interactiveMap(root,choices);
+ // Simulate a manually navigated viewport with non-integer scale and translation.
+ const viewHook=map.hooks.find(h=>h?.value&&typeof h.value==='object'&&'scale'in h.value);
+ viewHook.value={x:-141.75,y:77.25,scale:1.625};
+ map.render();
+ const oldView=map.view(),before=map.at('docs');
+ map.click('docs');
+ const after=map.at('docs'),next=map.view();
+ assert.ok(Math.abs(after.x-before.x)<1e-9&&Math.abs(after.y-before.y)<1e-9);
+ assert.equal(next.scale,oldView.scale);
+ assert.equal(next.x,oldView.x,'equal node depth must preserve horizontal pan');
+ assert.equal(map.layout().nodes.find(n=>n.path==='docs').open,true);
+ const beforeFold=map.at('docs');
+ map.click('docs');
+ assert.ok(Math.abs(map.at('docs').y-beforeFold.y)<1e-9);
+ const missing=map.plugin.mindMapAnchorView(oldView,{x:10,y:20},null);
+ assert.equal(missing,oldView,'removed nodes must not manufacture an offset');
 });
 
 test('every category starts with collapsed child folders and identical repository root screen anchor',async()=>{

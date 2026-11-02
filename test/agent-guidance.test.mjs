@@ -32,7 +32,27 @@ test('native AgentRegistry roots/list/get routes a pre-existing running Agent wi
  assert.equal(lead.received[0].role,'user');
  assert.equal(lead.received[0].source.kind,'workspace-governance');
  assert.match(lead.received[0].content[0].text,/目标使用率：70%/);
+ assert.match(lead.received[0].content[0].text,/不得删标点、空白或破坏 Markdown 排版凑数/);
+ assert.match(lead.received[0].content[0].text,/无法保真达标则报告差额/);
  assert.equal((await sender.send(workspace,q([task]),{changedPaths:paths([task])})).status,'unchanged');
+});
+test('cancellation merges duplicate paths while retaining every delivery receipt',async()=>{
+ const lead=testAgent(),other=testAgent({id:'other',status:'idle'});
+ const sender=createAgentGuidance({agents:host([lead,other])});
+ const cancellation={recipient:'lead',kind:'file',path:'docs/notes.md',previousTarget:70,current:92,limit:200};
+ const result=await sender.cancel(workspace,{verified:true,cancellations:[
+  {...cancellation,id:'old-1'}, {...cancellation,id:'old-2',previousTarget:80},
+  {...cancellation,id:'idle-1',recipient:'other'}
+ ]});
+ assert.equal(result.status,'queued');
+ assert.deepEqual(result.results[0].items.map(item=>item.id),['old-1','old-2']);
+ assert.equal(lead.received.length,1);
+ assert.equal(other.received.length,0);
+ const message=lead.received[0].content[0].text;
+ assert.equal((message.match(/docs\/notes\.md/g)||[]).length,1,'one item per file per original session');
+ assert.match(message,/旧目标 80 字符作废；当前 92\/200 字符/);
+ assert.match(message,/其他任务不变/);
+ assert.equal((await sender.cancel(workspace,{verified:false,cancellations:[cancellation]})).status,'skipped');
 });
 test('only running roots receive advice; idle, unrelated roots and runtime children excluded',async()=>{
  const lead=testAgent(),other=testAgent({id:'other',cwd:'D:/elsewhere'});
@@ -114,6 +134,17 @@ test('cooldown preserves new fingerprints and drains paged work after its expiry
   lead.status='running';sender.track(lead,'running');
   assert.equal((await sender.send(workspace,q(changed))).status,'queued');
   assert.equal(lead.received.length,3);});
+test('fallback registry caches only Agent identities and checks live status',async()=>{
+ const lead=testAgent(),sender=createAgentGuidance({agents:{}});
+ sender.track(lead,'idle');
+ assert.equal((await sender.send(workspace,q([mkTask()]))).status,'queued');
+ assert.equal(lead.received.length,1);
+ lead.status='idle';sender.track(lead,'running');
+ assert.equal((await sender.send(workspace,q([mkTask(94)]))).status,'no-running-agent');
+ lead.status='running';sender.remove(lead);
+ assert.equal((await sender.send(workspace,q([mkTask(94)]))).status,'no-running-agent');
+});
+
 test('native inbox lifecycle correlates accepted, claimed and discarded messages',async()=>{
  let time=200000;
  const lead=testAgent(),sender=createAgentGuidance({agents:host([lead]),now:()=>time});

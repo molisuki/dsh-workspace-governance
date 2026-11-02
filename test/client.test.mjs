@@ -81,7 +81,7 @@ test('mind map card and original detail panel preserve the existing navigation a
  assert.ok(source.includes("c('aside',{className:'wg-card wg-mindmap-card'}"));
  assert.ok(source.includes("c('section',{className:'wg-details'}"));
  assert.ok(source.includes("    maintenancePanel"));
- assert.ok(source.includes("          limitEditor,"));
+ assert.ok(source.includes("          limitEditor"));
  assert.ok(source.includes("c('div',{className:'wg-capacity-percent '+capacity.kind}"));
  assert.ok(source.includes("role:'radiogroup','aria-label':'Agent 容量管理模式'"));
  assert.ok(!source.includes("wg-settings-trigger','aria-label'"));

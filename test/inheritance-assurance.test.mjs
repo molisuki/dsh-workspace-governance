@@ -28,7 +28,9 @@ test('mind map folder expansion is isolated from inherited threshold editor beha
  const source=await fs.readFile(fileURLToPath(new URL('../lib/client.js',import.meta.url)),'utf8');
  assert.ok(source.includes("node.path===''||"));
  assert.ok(source.includes("node.path===''||expanded[node.path]===true"));
- assert.ok(source.includes("if(!file&&item.path!==''&&item.hasChildren)onToggle"));
+ assert.match(source,/if\(!file&&item\.path!==''&&item\.hasChildren\)\s*\{/);
+ assert.ok(source.includes('anchor.current={layout,path:item.path,node:item}'),
+  'folder expansion must capture its screen anchor before layout mutation');
  assert.ok(source.includes('onToggle(item.path,item.open)'));
  assert.ok(source.includes("placeholder:inherit?'继承自'+source:''"));
  assert.ok(source.includes("directoryOverride===undefined?'':String(directoryOverride)"));

@@ -53,6 +53,30 @@ test('mid-scan events invalidate the generation; no outdated result is considere
  assert.equal(index.isCurrent(ws.id,final),true);
 });
 
+test('a policy revision during a pending scan uses the latest policy snapshot',async()=>{
+ let release,started,calls=0;
+ const ready=new Promise(resolve=>{started=resolve;});
+ const index=createCapacityIndex({scan:async ws=>{
+  if(ws.policy.version===1&&++calls===1){
+   started();
+   await new Promise(resolve=>{release=resolve;});
+  }
+  return {workspaceId:ws.id,policyVersion:ws.policy.version,truncated:false,issues:[],
+   fingerprint:'version-'+ws.policy.version,tree:{type:'folder',path:'',children:[]}};
+ }});
+ const first={id:'same',policy:{version:1}};
+ const next={id:'same',policy:{version:2}};
+ const old=index.get(first);
+ await ready;
+ const newest=index.get(next);
+ release();
+ const [one,two]=await Promise.all([old,newest]);
+ assert.equal(one.policyVersion,2);
+ assert.equal(two.policyVersion,2);
+ assert.equal(index.isCurrent(next.id,two),true);
+ assert.strictEqual(await index.get(next),two);
+});
+
 test('unverified snapshots are cheap to display but never trusted; forced scans repair the state',async()=>{
  let n=0;
  const index=createCapacityIndex({scan:async()=>{
@@ -75,7 +99,7 @@ test('unverified snapshots are cheap to display but never trusted; forced scans 
  assert.equal(index.size(),1);
 });
 
-test('incremental Markdown edit/add/delete matches complete scan for content, counters, duplicate issues and ancestor budgets',async()=>{
+test('incremental Markdown edit/add/delete matches complete scan for content, counters, issues and ancestor budgets',async()=>{
  const tmp=await fs.mkdtemp(path.join(os.tmpdir(),'wg-incremental-'));
  try{
   const root=path.join(tmp,'repo');

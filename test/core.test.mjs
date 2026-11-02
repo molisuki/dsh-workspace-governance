@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {countCharacters,effectivePolicy,duplicateParagraphs,createRegistry,scanWorkspace,patchScanDocument,safeDocument,DEFAULT_POLICY,isProtectedDocument,validatePolicy,effectiveCapacityMode} from '../lib/core.js';
+import {countCharacters,effectivePolicy,createRegistry,scanWorkspace,patchScanDocument,safeDocument,DEFAULT_POLICY,isProtectedDocument,validatePolicy,effectiveCapacityMode} from '../lib/core.js';
 import {collectRemediationTasks} from '../lib/remediation-queue.js';
 test('default Markdown count includes Unicode whitespace and Markdown syntax',()=>{
  const source=' A 你好 \n B ';
@@ -39,11 +39,6 @@ test('canonical policy rejects retired fields and preserves explicit protection 
  assert.equal(isProtectedDocument(policy,'docs/references/literature-index.md'),true);
  assert.equal(isProtectedDocument(policy,'docs/references/README.md'),false);
  assert.throws(()=>validatePolicy({...policy,obsoleteSetting:true}),/Unknown workspace policy field/);
-});
-test('paragraph repetition only in prose',()=>{
- const fence=String.fromCharCode(96).repeat(3);
- const t='This is a repeated meaningful paragraph.\n\n'+fence+'\nThis is a repeated meaningful paragraph.\n'+fence+'\n\nThis is a repeated meaningful paragraph.';
- assert.equal(duplicateParagraphs(t).length,1);
 });
 
 test('full and incremental Markdown scans use exact source length unless prose mode is explicit',async()=>{
@@ -89,6 +84,22 @@ test('protected-document classification stays aligned between scans and queued t
   }
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+test('concurrent workspace registration is serialized and idempotent',async()=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'wg-register-race-'));
+ try{
+  const root=path.join(base,'repo');await fs.mkdir(root);
+  const registry=await createRegistry(path.join(base,'state'));
+  const entries=await Promise.all(Array.from({length:20},()=>registry.add(root)));
+  assert.equal(new Set(entries.map(item=>item.id)).size,1);
+  assert.equal(registry.snapshot().workspaces.length,1);
+  const reopened=await createRegistry(path.join(base,'state'));
+  assert.equal(reopened.snapshot().workspaces.length,1);
+  await assert.rejects(registry.add(path.join(base,'missing')));
+  const other=path.join(base,'other');await fs.mkdir(other);
+  assert.equal((await registry.add(other)).root,other,'rejection must release the registration lock');
+ }finally{await fs.rm(base,{recursive:true,force:true});}
+});
+
 test('register scan threshold, persist and deny escape',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'wg-test-'));
  try{

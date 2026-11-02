@@ -308,6 +308,187 @@ test('multiple running leads receive one batch per turn and backlog drains only 
    assert.equal(b.received.length,2);  assert.equal((await h.api('GET','/maintenance?id='+ws.id)).remediation.total,5);
  }finally{h.dispose();await fs.rm(base,{recursive:true,force:true});}
 });
+test('threshold change while native steer is awaiting acknowledgement still cancels accepted old instruction',async()=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'wg-steer-policy-race-'));
+ const h=await fixture(base,{cooldownMs:120,retryMs:120});
+ let release;
+ try{
+  const lead=h.createAgent({steer(message){if(message.source.kind==='workspace-governance')return new Promise(resolve=>{release=resolve;});}});
+  h.registry.set(lead.id,lead);
+  const ws=await h.configure();
+  await fs.writeFile(path.join(h.root,'race.md'),'x'.repeat(92));
+  await waitUntil(()=>lead.received.length===1&&typeof release==='function');
+  const first=lead.received[0];
+  assert.equal(first.source.kind,'workspace-governance');
+  const version=(await h.api('GET','/workspaces')).workspaces.find(w=>w.id===ws.id).policy.version;
+  const changed=await h.api('PUT','/defaults',{id:ws.id,defaultFileLimit:200,
+   warningRatio:.8,optimizationPercent:10,expectedVersion:version});
+  assert.equal(changed.ok,true);
+  await waitUntil(async()=>{
+   const data=(await h.api('GET','/remediation?id='+ws.id)).remediation;
+   return data.verified&&data.total===0&&data.policyVersion===version+1;
+  });
+  release();
+  await waitUntil(()=>lead.received.some(msg=>msg.source.kind==='workspace-governance-cancel'),6500);
+  const cancellation=lead.received.find(msg=>msg.source.kind==='workspace-governance-cancel');
+  assert.match(cancellation.content[0].text,/旧目标 70 字符作废/);
+  assert.match(cancellation.content[0].text,/当前 未知\/200 字符/,
+   'late receipts must report the verified limit without guessing a now-inactive file count');
+  await waitUntil(async()=>{
+   const current=(await h.api('GET','/remediation?id='+ws.id)).remediation;
+   return current.verified&&current.cancellations.length===0;
+  });
+ }finally{release?.();h.dispose();await fs.rm(base,{recursive:true,force:true});}
+});
+
+test('running Agent receives cancellation and revised target when a still-active rule changes',async()=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'wg-live-target-'));
+ const h=await fixture(base,{cooldownMs:120,retryMs:120});
+ try{
+  const lead=h.createAgent();h.registry.set(lead.id,lead);
+  const ws=await h.configure();
+  await fs.writeFile(path.join(h.root,'target.md'),'x'.repeat(92));
+  await waitUntil(()=>lead.received.length===1);
+  await waitUntil(async()=>(await h.api('GET','/remediation?id='+ws.id)).remediation.tasks[0]?.deliveredTo?.lead);
+  assert.match(lead.received[0].content[0].text,/目标字符数：70/);
+  const original=(await h.api('GET','/workspaces')).workspaces.find(w=>w.id===ws.id).policy.version;
+  const updated=await h.api('PUT','/defaults',{id:ws.id,defaultFileLimit:100,
+   warningRatio:.8,optimizationPercent:20,expectedVersion:original});
+  assert.equal(updated.ok,true);
+  await waitUntil(()=>lead.received.length===3,6500);
+  assert.deepEqual(lead.received.map(message=>message.source.kind),[
+   'workspace-governance','workspace-governance-cancel','workspace-governance']);
+  assert.match(lead.received[1].content[0].text,/旧目标 70 字符作废/);
+  assert.match(lead.received[2].content[0].text,/目标字符数：60/);
+  await waitUntil(async()=>{
+   const q=(await h.api('GET','/remediation?id='+ws.id)).remediation;
+   return q.cancellations.length===0&&q.tasks[0]?.deliveredTo?.lead===q.tasks[0]?.episodeId;
+  });
+  await h.api('POST','/scan',{id:ws.id});
+  await new Promise(resolve=>setTimeout(resolve,350));
+  assert.equal(lead.received.length,3,'reconcile cannot resend an already accepted revision');
+ }finally{h.dispose();await fs.rm(base,{recursive:true,force:true});}
+});
+
+test('directory create move delete and recreation refresh paths and keep explicit rule',async()=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'wg-live-directory-'));
+ const h=await fixture(base);
+ try{
+  const ws=await h.configure();
+  const original=(await h.api('GET','/workspaces')).workspaces.find(w=>w.id===ws.id).policy.version;
+  const rule=await h.api('PUT','/rules',{id:ws.id,scope:'directories',relative:'docs',
+    rule:{fileLimit:70},expectedVersion:original});
+  assert.equal(rule.ok,true);
+  await fs.mkdir(path.join(h.root,'docs'));
+  await fs.writeFile(path.join(h.root,'docs','new.md'),'x'.repeat(92));
+  await waitUntil(async()=>((await h.api('GET','/remediation?id='+ws.id)).remediation.tasks??[])
+    .some(task=>task.path==='docs/new.md'),6500);
+  await fs.rename(path.join(h.root,'docs'),path.join(h.root,'archive'));
+  await waitUntil(async()=>{
+   const tasks=(await h.api('GET','/remediation?id='+ws.id)).remediation.tasks??[];
+   return tasks.some(task=>task.path==='archive/new.md')&&!tasks.some(task=>task.path==='docs/new.md');
+  },6500);
+  await fs.rm(path.join(h.root,'archive'),{recursive:true,force:true});
+  await waitUntil(async()=>(await h.api('GET','/remediation?id='+ws.id)).remediation.total===0,6500);
+  await fs.mkdir(path.join(h.root,'docs'));
+  await fs.writeFile(path.join(h.root,'docs','again.md'),'z'.repeat(82));
+  await waitUntil(async()=>{
+   const tasks=(await h.api('GET','/remediation?id='+ws.id)).remediation.tasks??[];
+   return tasks.some(task=>task.path==='docs/again.md'&&task.limit===70);
+  },6500);
+  const policy=(await h.api('GET','/workspaces')).workspaces.find(w=>w.id===ws.id).policy;
+  assert.equal(policy.directories.docs.fileLimit,70);
+ }finally{h.dispose();await fs.rm(base,{recursive:true,force:true});}
+});
+
+test('new file limit supersedes the one accepted advisory exactly once for its original running session',async()=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'wg-cancel-'));
+ const h=await fixture(base,{cooldownMs:120});
+ try{
+  const lead=h.createAgent(),other=h.createAgent({id:'other',status:'idle'});
+  h.registry.set(lead.id,lead);h.registry.set(other.id,other);
+  const ws=await h.configure();
+  const file=path.join(h.root,'criterion-gaps.md');
+  await fs.writeFile(file,'x'.repeat(92));
+  await waitUntil(()=>lead.received.length===1);
+  await waitUntil(async()=>(await h.api('GET','/remediation?id='+ws.id)).remediation.tasks[0]?.deliveredTo?.lead);
+  const before=lead.received[0].content[0].text;
+  assert.match(before,/目标字符数：70/);
+  const version=(await h.api('GET','/workspaces')).workspaces.find(w=>w.id===ws.id).policy.version;
+  await h.api('PUT','/defaults',{id:ws.id,defaultFileLimit:200,warningRatio:.8,optimizationPercent:10,expectedVersion:version});
+  await waitUntil(()=>lead.received.length===2);
+  const cancellation=lead.received[1];
+  assert.equal(cancellation.source.kind,'workspace-governance-cancel');
+  assert.match(cancellation.content[0].text,/WORKSPACE_GOVERNANCE: CANCEL/);
+  assert.match(cancellation.content[0].text,/criterion-gaps.md/);
+  assert.match(cancellation.content[0].text,/当前 92\/200 字符/);
+  assert.match(cancellation.content[0].text,/旧目标 70 字符作废/);
+  await waitUntil(async()=>!(await h.api('GET','/remediation?id='+ws.id)).remediation.cancellations?.length);
+  await h.api('POST','/scan',{id:ws.id});
+  await h.api('POST','/scan',{id:ws.id});
+  await new Promise(resolve=>setTimeout(resolve,400));
+  assert.equal(lead.received.length,2,'one cancellation per accepted task and session');
+  assert.equal(other.received.length,0,'idle and unrelated recipients receive nothing');
+  assert.equal((await h.api('GET','/remediation?id='+ws.id)).remediation.total,0);
+ }finally{h.dispose();await fs.rm(base,{recursive:true,force:true});}
+});
+
+test('saved custom cancellation template controls verified cancellation without changing advisory wording',async()=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'wg-cancel-template-'));
+ const h=await fixture(base,{cooldownMs:120});
+ try{
+  const lead=h.createAgent();h.registry.set(lead.id,lead);
+  const ws=await h.configure();
+  const original=await h.api('GET','/maintenance?id='+ws.id);
+  const configured=await h.api('PUT','/skill-settings',{id:ws.id,expectedVersion:original.policyVersion,
+   settings:{...original.skillSettings,mode:'custom',
+    customCancelPrompt:'CUSTOM CANCEL\n{{items}}\nOnly cancel this task'}});
+  assert.equal(configured.ok,true);
+  await fs.writeFile(path.join(h.root,'override.md'),'x'.repeat(92));
+  await waitUntil(()=>lead.received.length===1);
+  await waitUntil(async()=>(await h.api('GET','/remediation?id='+ws.id)).remediation.tasks[0]?.deliveredTo?.lead);
+  const advisory=lead.received[0].content[0].text;
+  assert.match(advisory,/WORKSPACE_GOVERNANCE: ADVISORY/);
+  assert.match(advisory,/目标字符数：70/);
+  const version=(await h.api('GET','/workspaces')).workspaces.find(w=>w.id===ws.id).policy.version;
+  await h.api('PUT','/defaults',{id:ws.id,defaultFileLimit:200,warningRatio:.8,
+   optimizationPercent:10,expectedVersion:version});
+  await waitUntil(()=>lead.received.length===2);
+  const cancellation=lead.received[1];
+  assert.equal(cancellation.source.kind,'workspace-governance-cancel');
+  assert.match(cancellation.content[0].text,/^CUSTOM CANCEL/);
+  assert.match(cancellation.content[0].text,/override.md/);
+  assert.match(cancellation.content[0].text,/当前 92\/200 字符/);
+  assert.match(cancellation.content[0].text,/Only cancel this task/);
+  await waitUntil(async()=>!(await h.api('GET','/remediation?id='+ws.id)).remediation.cancellations?.length);
+  assert.equal(lead.received.length,2);
+ }finally{h.dispose();await fs.rm(base,{recursive:true,force:true});}
+});
+
+test('discarded cancellation is requeued once and does not reinstate the obsolete advisory',async()=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'wg-cancel-discard-'));
+ const h=await fixture(base,{cooldownMs:120,retryMs:120});
+ try{
+  const lead=h.createAgent();h.registry.set(lead.id,lead);
+  const ws=await h.configure();
+  await fs.writeFile(path.join(h.root,'obsolete.md'),'x'.repeat(90));
+  await waitUntil(()=>lead.received.length===1);
+  await waitUntil(async()=>(await h.api('GET','/remediation?id='+ws.id)).remediation.tasks[0]?.deliveredTo?.lead);
+  const version=(await h.api('GET','/workspaces')).workspaces.find(w=>w.id===ws.id).policy.version;
+  await h.api('PUT','/defaults',{id:ws.id,defaultFileLimit:200,warningRatio:.8,optimizationPercent:10,expectedVersion:version});
+  await waitUntil(()=>lead.received.length===2);
+  await waitUntil(async()=>!(await h.api('GET','/remediation?id='+ws.id)).remediation.cancellations?.length);
+  const cancelled=lead.received[1];
+  h.emit('agent/inbox/discarded',{agent:lead,message:cancelled});
+  await waitUntil(()=>lead.received.length===3,5500);
+  assert.equal(lead.received[2].source.kind,'workspace-governance-cancel');
+  await waitUntil(async()=>!(await h.api('GET','/remediation?id='+ws.id)).remediation.cancellations?.length);
+  await h.api('POST','/scan',{id:ws.id});
+  await new Promise(resolve=>setTimeout(resolve,300));
+  assert.equal(lead.received.length,3,'rejected cancellation retries once, not repeatedly');
+  assert.equal((await h.api('GET','/remediation?id='+ws.id)).remediation.total,0);
+ }finally{h.dispose();await fs.rm(base,{recursive:true,force:true});}
+});
 test('rejected native steer retries from persistent queue without another filesystem edit',async()=>{
  const base=await fs.mkdtemp(path.join(os.tmpdir(),'wg-retry-'));
  const h=await fixture(base,{retryMs:120});

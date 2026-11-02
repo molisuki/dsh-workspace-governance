@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
-import {DEFAULT_CUSTOM_PROMPT,DEFAULT_EMBEDDED_PROMPT,effectiveSkillSettings} from '../lib/skill-strategy.js';
+import {DEFAULT_CUSTOM_PROMPT,DEFAULT_EMBEDDED_PROMPT,DEFAULT_CUSTOM_CANCEL_PROMPT,DEFAULT_EMBEDDED_CANCEL_PROMPT,effectiveSkillSettings} from '../lib/skill-strategy.js';
 
 function find(tree,predicate){
  if(!tree||typeof tree!=='object')return null;
@@ -16,27 +16,34 @@ function matches(tree,predicate,out=[]){
  for(const child of tree.children??[])matches(child,predicate,out);
  return out;
 }
-async function clientHarness(startMode='custom'){
+async function clientHarness(startMode='custom',{legacy=false}={}){
  let source=await fs.readFile(new URL('../lib/client.js',import.meta.url),'utf8');
  assert.ok(source.includes('return {apply,inject:'),'stable client factory signature for isolated UI test');
- source=source.replace('return {apply,inject:','return {Page,apply,inject:');
+ source=source.replace('return {apply,inject:','return {Page,cancelFallback,apply,inject:');
  const persisted=effectiveSkillSettings({});
  persisted.mode=startMode;
  persisted.customSkill='Original Skill document';
  persisted.customPrompt='SAVED CUSTOM PROMPT';
  persisted.embeddedPrompt='SAVED EMBEDDED PROMPT';
+ persisted.customCancelPrompt='SAVED CUSTOM CANCEL {{items}}';
+ persisted.embeddedCancelPrompt='SAVED EMBEDDED CANCEL {{items}}';
+ if(legacy){delete persisted.customCancelPrompt;delete persisted.embeddedCancelPrompt;}
  const workspace={id:'ws',name:'demo',root:'D:/demo',policy:{
   version:1,defaultFileLimit:2400,warningRatio:.8,optimizationPercent:10,
   capacityMode:'warning',directories:{},files:{}}};
  const status={ok:true,available:true,mode:'warning',workspaceId:'ws',policyVersion:1,
   events:[],skillSettings:{...persisted},
-  skillPromptDefaults:{customPrompt:DEFAULT_CUSTOM_PROMPT,embeddedPrompt:DEFAULT_EMBEDDED_PROMPT}};
+  skillPromptDefaults:{customPrompt:DEFAULT_CUSTOM_PROMPT,embeddedPrompt:DEFAULT_EMBEDDED_PROMPT,
+   customCancelPrompt:DEFAULT_CUSTOM_CANCEL_PROMPT,embeddedCancelPrompt:DEFAULT_EMBEDDED_CANCEL_PROMPT}};
+ if(legacy){delete status.skillPromptDefaults.customCancelPrompt;delete status.skillPromptDefaults.embeddedCancelPrompt;}
  const store=new Map([
-  [0,[workspace]],[1,'ws'],[20,false],[21,false],[22,startMode],
-  [23,persisted.customSkill],[24,persisted.customPrompt],
-  [25,persisted.embeddedPrompt],[26,status]
+  [0,[workspace]],[1,'ws'],[18,false],[19,false],[20,startMode],
+  [21,persisted.customSkill],[22,persisted.customPrompt],
+  [23,persisted.embeddedPrompt],[24,status],[25,false],
+  [26,persisted.customCancelPrompt??DEFAULT_CUSTOM_CANCEL_PROMPT],
+  [27,persisted.embeddedCancelPrompt??DEFAULT_EMBEDDED_CANCEL_PROMPT]
  ]);
- let cursor=0,module;
+ let cursor=0,module,effects=[];
  const calls=[];
  const React={
   createElement:(type,props,...children)=>({type,props:props??{},children}),
@@ -46,7 +53,7 @@ async function clientHarness(startMode='custom'){
    return [store.get(at),next=>store.set(at,typeof next==='function'?next(store.get(at)):next)];
   },
   useRef:value=>({current:value}),
-  useEffect:()=>{},
+  useEffect:(fn,deps)=>effects.push({fn,deps}),
   useMemo:fn=>fn(),
   useCallback:fn=>fn
  };
@@ -77,14 +84,25 @@ async function clientHarness(startMode='custom'){
   if(route.startsWith('/maintenance?'))return {ok:true,status:200,json:async()=>({...status})};
   throw Error('Unexpected endpoint: '+route);
  };
- vm.runInNewContext(source,{window:{__ModuleLoader__:{load(value){module=value;}},confirm:()=>true},fetch,console});
+ vm.runInNewContext(source,{window:{__ModuleLoader__:{load(value){module=value;}},confirm:()=>true,
+  setInterval:()=>0,clearInterval:()=>{}},setInterval:()=>0,clearInterval:()=>{},fetch,console});
  const plugin=module.factory(()=>React);
- const render=()=>{cursor=0;return plugin.Page({services:{}});};
- return {render,store,calls,persisted,status};
+ assert.equal(plugin.cancelFallback,DEFAULT_EMBEDDED_CANCEL_PROMPT,'legacy client fallback matches the server-owned canonical template');
+ const render=()=>{cursor=0;effects=[];return plugin.Page({services:{}});};
+ const syncMaintenance=async()=>{
+  const effect=effects.find(item=>item.deps?.length===1&&item.deps[0]==='ws');
+  assert.ok(effect,'maintenance refresh effect');
+  effect.fn();
+  for(let i=0;i<20;i++)await Promise.resolve();
+ };
+ return {render,syncMaintenance,store,calls,persisted,status};
 }
 const promptToggle=tree=>find(tree,n=>n.type==='button'&&n.props?.className==='wg-prompt-toggle');
 const promptEditor=(tree,mode)=>find(tree,n=>n.type==='textarea'&&
  n.props?.['aria-label']===(mode==='custom'?'自定义 Agent 精简提示词':'内置 Skill Agent 精简提示词'));
+const cancelToggle=tree=>find(tree,n=>n.type==='button'&&n.props?.['aria-controls']==='wg-cancel-prompt-content');
+const cancelEditor=(tree,mode)=>find(tree,n=>n.type==='textarea'&&
+ n.props?.['aria-label']===(mode==='custom'?'自定义 Agent 取消提示词':'内置 Skill Agent 取消提示词'));
 const button=(tree,label)=>find(tree,n=>typeof n.type==='function'&&n.children?.[0]===label);
 const actionRow=(tree,labels)=>find(tree,n=>n.props?.className==='wg-skill-actions'&&
  labels.every(label=>n.children?.some(child=>child.children?.[0]===label)));
@@ -172,7 +190,7 @@ test('log tab renders measured changes, restores guarded file and deletes indivi
  assert.ok(card,'log tab should render log card, not mind map');
  assert.equal(find(tree,n=>n.props?.className==='wg-map-shell'),null);
  assert.ok(find(card,n=>n.type==='strong'&&n.props?.className==='reduced'&&n.children.join('')==='减少 300 (25.0%)'));
- assert.ok(find(card,n=>n.props?.className==='wg-log-unmeasured'&&n.children[0]==='字符变化：未记录'));
+ assert.ok(find(card,n=>n.props?.className==='wg-log-unmeasured'&&n.children[0]==='字符变化：无法比较'));
  assert.ok(button(card,'恢复文档'));
  assert.ok(button(card,'删除日志'));
  await button(card,'恢复文档').props.onClick();
@@ -244,34 +262,172 @@ test('Embedded Skill prompt is collapsed by default; restore uses canonical defa
  assert.equal(h.persisted.customPrompt,'SAVED CUSTOM PROMPT');
 });
 
+test('Custom cancel prompt is directly below advisory, independently collapsible, resettable and saved alone',async()=>{
+ const h=await clientHarness('custom');
+ let tree=openSkillCard(h);
+ assert.equal(cancelToggle(tree)?.props['aria-expanded'],false);
+ assert.equal(cancelEditor(tree,'custom'),null);
+ const toggles=matches(tree,n=>n.props?.className==='wg-prompt-toggle');
+ assert.deepEqual(toggles.map(n=>n.children[0]),['完整 Agent 精简提示词','完整 Agent 取消提示词']);
+ cancelToggle(tree).props.onClick();
+ tree=h.render();
+ assert.equal(cancelEditor(tree,'custom').props.value,'SAVED CUSTOM CANCEL {{items}}');
+ assert.equal(promptEditor(tree,'custom'),null);
+ assert.ok(button(tree,'保存取消提示词'));
+ button(tree,'还原默认取消提示词').props.onClick();
+ tree=h.render();
+ assert.equal(cancelEditor(tree,'custom').props.value,DEFAULT_CUSTOM_CANCEL_PROMPT);
+ assert.equal(h.persisted.customCancelPrompt,'SAVED CUSTOM CANCEL {{items}}');
+ await button(tree,'保存取消提示词').props.onClick();
+ assert.equal(h.calls.length,1);
+ assert.equal(h.calls[0].input.settings.customCancelPrompt,DEFAULT_CUSTOM_CANCEL_PROMPT);
+ assert.equal(h.calls[0].input.settings.customPrompt,'SAVED CUSTOM PROMPT');
+ assert.equal(h.calls[0].input.settings.embeddedCancelPrompt,'SAVED EMBEDDED CANCEL {{items}}');
+ assert.equal(h.persisted.customPrompt,'SAVED CUSTOM PROMPT');
+});
+
+test('saving the advisory does not save an unsaved cancellation draft',async()=>{
+ const h=await clientHarness('custom');
+ let tree=openSkillCard(h);
+ cancelToggle(tree).props.onClick();
+ tree=h.render();
+ cancelEditor(tree,'custom').props.onChange({target:{value:'DRAFT CANCEL {{items}}'}});
+ promptToggle(tree).props.onClick();
+ tree=h.render();
+ await button(tree,'保存 Skill 与提示词').props.onClick();
+ assert.equal(h.persisted.customCancelPrompt,'SAVED CUSTOM CANCEL {{items}}');
+ assert.equal(h.calls[0].input.settings.customCancelPrompt,'SAVED CUSTOM CANCEL {{items}}');
+ tree=h.render();
+ assert.equal(cancelEditor(tree,'custom').props.value,'DRAFT CANCEL {{items}}');
+ await button(tree,'保存取消提示词').props.onClick();
+ assert.equal(h.persisted.customCancelPrompt,'DRAFT CANCEL {{items}}');
+ assert.equal(h.persisted.customPrompt,'SAVED CUSTOM PROMPT');
+});
+
+test('Embedded cancel prompt is separately editable and the Skill mode switch discards unsaved cancellation changes',async()=>{
+ const h=await clientHarness('embedded');
+ let tree=openSkillCard(h);
+ cancelToggle(tree).props.onClick();
+ tree=h.render();
+ const editor=cancelEditor(tree,'embedded');
+ assert.equal(editor.props.value,'SAVED EMBEDDED CANCEL {{items}}');
+ editor.props.onChange({target:{value:'WORKSPACE_GOVERNANCE: CANCEL\\n{{items}}\\nNew edit'}});
+ tree=h.render();
+ assert.ok(cancelEditor(tree,'embedded').props.value.includes('New edit'));
+ const customOption=find(tree,n=>n.type==='input'&&n.props?.name==='wg-skill-mode'&&n.props?.value==='custom');
+ customOption.props.onChange();
+ assert.equal(h.store.get(25),false);
+ for(let i=0;i<20;i++)await Promise.resolve();
+ tree=h.render();
+ assert.equal(h.calls[0].input.settings.embeddedCancelPrompt,'SAVED EMBEDDED CANCEL {{items}}');
+ assert.equal(h.store.get(27),'SAVED EMBEDDED CANCEL {{items}}');
+ assert.equal(cancelToggle(tree).props['aria-expanded'],false);
+ const embeddedOption=find(tree,n=>n.type==='input'&&n.props?.name==='wg-skill-mode'&&n.props?.value==='embedded');
+ embeddedOption.props.onChange();
+ for(let i=0;i<20;i++)await Promise.resolve();
+ tree=h.render();
+ cancelToggle(tree).props.onClick();
+ tree=h.render();
+ assert.equal(cancelEditor(tree,'embedded').props.value,'SAVED EMBEDDED CANCEL {{items}}');
+ button(tree,'还原默认取消提示词').props.onClick();
+ tree=h.render();
+ assert.equal(cancelEditor(tree,'embedded').props.value,DEFAULT_EMBEDDED_CANCEL_PROMPT);
+ await button(tree,'保存取消提示词').props.onClick();
+ assert.equal(h.persisted.embeddedCancelPrompt,DEFAULT_EMBEDDED_CANCEL_PROMPT);
+ assert.equal(h.persisted.embeddedPrompt,'SAVED EMBEDDED PROMPT');
+});
+
+test('legacy backend never renders a blank cancellation prompt or silently rejects ordinary Skill changes',async()=>{
+ const h=await clientHarness('embedded',{legacy:true});
+ let tree=openSkillCard(h);
+ await h.syncMaintenance();
+ tree=h.render();
+ cancelToggle(tree).props.onClick();
+ tree=h.render();
+ assert.equal(cancelEditor(tree,'embedded').props.value,DEFAULT_EMBEDDED_CANCEL_PROMPT);
+ assert.equal(cancelEditor(tree,'embedded').props.disabled,true);
+ assert.equal(button(tree,'还原默认取消提示词').props.disabled,true);
+ assert.equal(button(tree,'保存取消提示词').props.disabled,true);
+ assert.ok(find(tree,node=>node.type==='p'&&String(node.children[0]).includes('重新加载插件')));
+ const customOption=find(tree,node=>node.type==='input'&&node.props?.name==='wg-skill-mode'&&node.props?.value==='custom');
+ customOption.props.onChange();
+ for(let i=0;i<25;i++)await Promise.resolve();
+ assert.equal(h.calls.length,1);
+ assert.equal(h.calls[0].input.settings.mode,'custom');
+ assert.equal(Object.hasOwn(h.calls[0].input.settings,'customCancelPrompt'),false);
+ assert.equal(Object.hasOwn(h.calls[0].input.settings,'embeddedCancelPrompt'),false);
+ tree=h.render();
+ cancelToggle(tree).props.onClick();
+ tree=h.render();
+ assert.equal(cancelEditor(tree,'custom').props.value,DEFAULT_CUSTOM_CANCEL_PROMPT);
+});
+
+test('upgraded runtime fills cancellation template without changing user advisory content',async()=>{
+ const h=await clientHarness('custom',{legacy:true});
+ openSkillCard(h);
+ await h.syncMaintenance();
+ assert.equal(h.store.get(26),DEFAULT_CUSTOM_CANCEL_PROMPT);
+ h.status.skillSettings.customCancelPrompt='SERVER CUSTOM CANCEL {{items}}';
+ h.status.skillSettings.embeddedCancelPrompt='SERVER EMBEDDED CANCEL {{items}}';
+ h.status.skillPromptDefaults.customCancelPrompt=DEFAULT_CUSTOM_CANCEL_PROMPT;
+ h.status.skillPromptDefaults.embeddedCancelPrompt=DEFAULT_EMBEDDED_CANCEL_PROMPT;
+ await h.syncMaintenance();
+ assert.equal(h.store.get(26),'SERVER CUSTOM CANCEL {{items}}');
+ assert.equal(h.store.get(27),'SERVER EMBEDDED CANCEL {{items}}');
+ assert.equal(h.store.get(22),'SAVED CUSTOM PROMPT');
+ const tree=h.render();
+ cancelToggle(tree).props.onClick();
+ const shown=h.render();
+ assert.equal(cancelEditor(shown,'custom').props.disabled,false);
+ assert.equal(cancelEditor(shown,'custom').props.value,'SERVER CUSTOM CANCEL {{items}}');
+});
+
+test('expanded editors have one heading only, no unrelated persistent parameter list, and bounded height',async()=>{
+ for(const mode of ['custom','embedded']){
+  const h=await clientHarness(mode);
+  let tree=openSkillCard(h);
+  promptToggle(tree).props.onClick();
+  cancelToggle(tree).props.onClick();
+  tree=h.render();
+  const card=find(tree,n=>n.props?.id==='wg-skill-content');
+  const headings=matches(card,n=>n.type==='button'&&n.props?.className==='wg-prompt-toggle');
+  assert.deepEqual(headings.map(n=>n.children[0]),['完整 Agent 精简提示词','完整 Agent 取消提示词']);
+  assert.equal(matches(card,n=>n.type==='label'&&n.props?.className==='wg-prompt-label').length,0);
+  assert.equal(promptEditor(tree,mode).props.rows,6);
+  assert.equal(cancelEditor(tree,mode).props.rows,6);
+  assert.equal(matches(card,n=>n.type==='p'&&String(n.children[0]).includes('支持 {{file}}')).length,0);
+  assert.equal(matches(card,n=>n.type==='p'&&String(n.children[0]).includes('必需变量：{{items}}')).length,1);
+ }
+});
+
 test('Switching from an expanded Custom prompt to Embedded collapses the editor and does not silently persist unsaved reset',async()=>{
  const h=await clientHarness('custom');
  let tree=openSkillCard(h);
  promptToggle(tree).props.onClick();
  tree=h.render();
  button(tree,'还原默认提示词').props.onClick();
- assert.equal(h.store.get(24),DEFAULT_CUSTOM_PROMPT);
+ assert.equal(h.store.get(22),DEFAULT_CUSTOM_PROMPT);
  tree=h.render();
  const embeddedOption=find(tree,n=>n.type==='input'&&n.props?.name==='wg-skill-mode'&&n.props?.value==='embedded');
  assert.ok(embeddedOption);
  embeddedOption.props.onChange();
- assert.equal(h.store.get(21),false,'mode switch immediately collapses both prompt editors');
+ assert.equal(h.store.get(19),false,'mode switch immediately collapses both prompt editors');
  for(let i=0;i<12&&!h.calls.length;i++)await Promise.resolve();
  assert.equal(h.calls.length,1);
  assert.equal(h.calls[0].input.settings.mode,'embedded');
  assert.equal(h.calls[0].input.settings.customPrompt,'SAVED CUSTOM PROMPT','unsaved reset must not be silently saved');
  for(let i=0;i<16;i++)await Promise.resolve();
  tree=h.render();
- assert.equal(h.store.get(22),'embedded');
- assert.equal(h.store.get(21),false);
+ assert.equal(h.store.get(20),'embedded');
+ assert.equal(h.store.get(19),false);
  assert.equal(promptEditor(tree,'embedded'),null);
- assert.equal(h.store.get(24),'SAVED CUSTOM PROMPT','unsaved reset is discarded on mode switch');
+ assert.equal(h.store.get(22),'SAVED CUSTOM PROMPT','unsaved reset is discarded on mode switch');
  const customOption=find(tree,n=>n.type==='input'&&n.props?.name==='wg-skill-mode'&&n.props?.value==='custom');
  customOption.props.onChange();
- assert.equal(h.store.get(21),false);
+ assert.equal(h.store.get(19),false);
  for(let i=0;i<16;i++)await Promise.resolve();
  tree=h.render();
- assert.equal(h.store.get(22),'custom');
+ assert.equal(h.store.get(20),'custom');
  assert.equal(promptToggle(tree).props['aria-expanded'],false);
  assert.equal(promptEditor(tree,'custom'),null);
 });

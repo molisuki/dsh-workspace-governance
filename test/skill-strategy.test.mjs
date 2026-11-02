@@ -7,7 +7,7 @@ import {Readable} from 'node:stream';
 import {apply} from '../lib/index.js';
 import {createRegistry} from '../lib/core.js';
 import {embeddedSkillLocations} from '../lib/embedded-skills.js';
-import {effectiveSkillSettings,validateSkillSettings,renderSkillPrompt,skillStrategyFeedback,DEFAULT_CUSTOM_PROMPT,DEFAULT_EMBEDDED_PROMPT} from '../lib/skill-strategy.js';
+import {effectiveSkillSettings,validateSkillSettings,renderSkillPrompt,skillStrategyFeedback,cancellationPrompt,DEFAULT_CUSTOM_PROMPT,DEFAULT_EMBEDDED_PROMPT,DEFAULT_CUSTOM_CANCEL_PROMPT,DEFAULT_EMBEDDED_CANCEL_PROMPT} from '../lib/skill-strategy.js';
 
 test('editable Skill configuration safely substitutes trigger-threshold and target-usage variables',()=>{
  const defaults=effectiveSkillSettings({});
@@ -25,6 +25,23 @@ test('editable Skill configuration safely substitutes trigger-threshold and targ
  assert.throws(()=>validateSkillSettings({...defaults,embeddedPrompt:''}),/Empty Skill text/);
  assert.throws(()=>validateSkillSettings({...defaults,embeddedPrompt:'bad\0text'}),/Invalid embeddedPrompt/);
  assert.equal(validateSkillSettings({...defaults,customSkill:'Literal {{user_defined}} may be documentation'}).mode,'embedded');
+});
+
+test('cancellation templates use matching Skill modes while legacy settings remain valid',()=>{
+ const oldSettings={mode:'custom',customSkill:'Rule',customPrompt:'Advice',embeddedPrompt:'Embedded'};
+ assert.equal(validateSkillSettings(oldSettings),oldSettings);
+ const migrated=effectiveSkillSettings({skillSettings:oldSettings});
+ assert.equal(migrated.customPrompt,'Advice');
+ assert.equal(migrated.customCancelPrompt,DEFAULT_CUSTOM_CANCEL_PROMPT);
+ assert.equal(migrated.embeddedCancelPrompt,DEFAULT_EMBEDDED_CANCEL_PROMPT);
+ const custom={...migrated,customCancelPrompt:'CUSTOM CANCEL {{items}}',
+  embeddedCancelPrompt:'EMBEDDED CANCEL {{items}}'};
+ assert.equal(cancellationPrompt({skillSettings:custom},'target.md'),'CUSTOM CANCEL target.md');
+ assert.equal(cancellationPrompt({skillSettings:{...custom,mode:'embedded'}},'target.md'),'EMBEDDED CANCEL target.md');
+ assert.equal(cancellationPrompt({skillSettings:{...custom,mode:'off'}},'target.md'),
+  'WORKSPACE_GOVERNANCE: CANCEL\ntarget.md\n只停止上述旧任务；其他任务不变。');
+ assert.throws(()=>validateSkillSettings({...custom,customCancelPrompt:'omit targets'}),/Missing cancellation items placeholder/);
+ assert.throws(()=>validateSkillSettings({...custom,embeddedCancelPrompt:'{{items}} {{injected}}'}),/Unknown prompt variable/);
 });
 
 test('selected Skill mode controls non-blocking session advice, independent of any write hook',()=>{
